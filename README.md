@@ -1,102 +1,119 @@
-# Influence-Function
-PyTorch Implementation of Famous Influence Function Methods.
+# Empirical Influence Function — PyTorch Implementation
 
-## 🧠 What is Influence Function? 
+[![Python](https://img.shields.io/badge/Python-3.x-blue.svg)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-orange.svg)](https://pytorch.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-The influence function (Understanding Black-box Predictions via Influence Functions, ICML 2017.) tells you:
+**PyTorch implementation of influence function methods** for understanding how individual training samples affect model predictions. Includes the classic ICML 2017 influence function, **TracIn** (NeurIPS 2020), and **EmpiricalIF** (NeurIPS 2022) for fast, single-checkpoint influence estimation without inverse Hessian.
+
+---
+
+## Table of Contents
+
+- [What is an Influence Function?](#-what-is-an-influence-function)
+- [How It Works](#-how-influence-function-works)
+- [Methods Included](#-methods-included)
+- [Installation](#-installation)
+- [Quick Start](#-quick-start)
+- [Usage Examples](#-usage-examples)
+- [Citation](#-citation)
+- [Author & Contact](#-author--contact)
+
+---
+
+## 🧠 What is an Influence Function?
+
+The **influence function** (*Understanding Black-box Predictions via Influence Functions*, ICML 2017) answers:
 
 > **How much does a single training point affect the model's prediction or loss on a specific test point?**
 
-Imagine training your model, then removing or perturbing one training sample. The influence function estimates:
+Instead of retraining after removing or perturbing a training sample, the influence function **estimates** the change in the model’s prediction (or loss) on a test point using gradient and Hessian approximations — **no retraining required**.
 
-> **What would happen to the model’s prediction (or loss) on a test point if I changed that training sample?**
+---
 
-But it does this without re-training — using gradient and Hessian approximations instead.
-
-## 🧪 How Influence Function (Understanding Black-box Predictions via Influence Functions, ICML 2017) Works?
+## 🧪 How Influence Function Works
 
 <!---
 $$
 \text{Influence}(z_i, z_{\text{test}}) = - \nabla_\theta \mathcal{L}(z_{\text{test}}, \hat{\theta})^\top H_{\hat{\theta}}^{-1} \nabla_\theta \mathcal{L}(z_i, \hat{\theta})
 $$
 !--->
-<img width="450" alt="Screenshot 2025-07-09 at 12 46 53 PM" src="https://github.com/user-attachments/assets/2b51e430-b063-4cf3-abde-1a7e970401c2" />
+<img width="450" alt="Classic influence function formula: gradient of test loss times inverse Hessian times gradient of training loss" src="https://github.com/user-attachments/assets/2b51e430-b063-4cf3-abde-1a7e970401c2" />
 
-Where $z_i$ is a training sample, $z_{\text{test}}$ is the test sample, $\hat{\theta}$ are the trained model parameters, $\mathcal{L}$ is the loss function.
+Where $z_i$ is a training sample, $z_{\text{test}}$ is the test sample, $\hat{\theta}$ are the trained model parameters, $\mathcal{L}$ is the loss function.  
 $H_{\hat{\theta}}$ is the Hessian of the **total** training loss at $\hat{\theta}$, i.e. $H_{\hat{\theta}} = \frac{1}{n} \sum_{i=1}^{n} \nabla^2_\theta \mathcal{L}(z_i, \theta) \bigg|_{\theta = \hat{\theta}}$
 
-- **Positive influence scores** → test loss goes up if we keep this training point → it's **harmful**
-- **Negative influence scores** → test loss goes down if we keep this point → it's **helping**
-  
+- **Positive influence** → keeping this training point increases test loss → **harmful** for this test point  
+- **Negative influence** → keeping this point decreases test loss → **helpful**
+
+---
+
 ## ❗ Limitations of the Original Influence Function
 
-One limitation of the original Influence Function design is its computation bottleneck in the estimation of inverse Hessian. 
-Even approximating with conjugate gradient or damping can be expensive and unstable.
-In this repository, we also include two lightweight variants of Influence Function, which greatly speed up the computation.
+The main bottleneck is **estimating the inverse Hessian**. Conjugate gradient or damping can be expensive and unstable. This repo provides two **lightweight alternatives** that avoid the full inverse Hessian:
 
-| Paper | Tool Name | Venue |
-| ---|---| ---|
-| Estimating Training Data Influence by Tracing Gradient Descent | TracIn | NeurIPs 2020 |
-| Debugging and Explaining Metric Learning Approach: An Influence Function Perspective | EmpiricalIF | NeurIPs 2022 |
+| Paper | Method | Venue |
+| --- | --- | --- |
+| Estimating Training Data Influence by Tracing Gradient Descent | **TracIn** | NeurIPS 2020 |
+| Debugging and Explaining Metric Learning Approach: An Influence Function Perspective | **EmpiricalIF** | NeurIPS 2022 |
 
-### Intuitions of TracIn
+### Intuition: TracIn
 
-<!---
-$$
-\text{Influence}(z_i, z_{\text{test}}) = \frac{1}{T} \sum_{t=1}^T \nabla_\theta \mathcal{L}(z_{\text{test}}, \hat{\theta})^\top \nabla_\theta \mathcal{L}(z_i, \hat{\theta})
-$$
-!--->
+<img width="464" alt="TracIn formula: average over checkpoints of gradient dot product between test and training sample" src="https://github.com/user-attachments/assets/342a758b-1c37-422e-8ef2-af95533f55a5" />
 
-<img width="464" alt="Screenshot 2025-07-09 at 12 46 09 PM" src="https://github.com/user-attachments/assets/342a758b-1c37-422e-8ef2-af95533f55a5" />
+With $T$ checkpoints from training, TracIn measures **gradient alignment** (dot product) at each checkpoint:
 
+- **Positive** → $z_i$ helped reduce test loss  
+- **Negative** → $z_i$ hurt test performance (possibly harmful)
 
-If we have collected $T$ checkpoints during the training process, TracIn estimates the influence of a training point on a test point by computing the **gradient alignment** (dot product) at each checkpoint:
+TracIn is **first-order** (no Hessian); it needs **multiple checkpoints** for good estimates.
 
-- A **positive value** suggests that $z_i$ helped the model reduce test loss.
-- A **negative value** suggests that $z_i$ hurt test performance (possibly harmful data).
-
-TracIn is fundamentally a _**first-order**_ influence approximation, unlike the original Influence Function which involves _**second-order**_ Hessian terms.
-One limitation of TracIn is that it requires recording intermediate checkpoints in order to have a good estimation.
-
-### Intuitions of EmpiricalIF
-
-<!---
-$$
-\text{Influence}(z_i, z_{\text{test}}) = 
-\mathbb{E_{\delta}} \left[ (\mathcal{L}_{\hat{\theta} + \delta}(z_{test})-\mathcal{L}_{\hat{\theta}}(z_{test}))^\top (\mathcal{L}_{\hat{\theta} + \delta}(z_i)-\mathcal{L}_{\hat{\theta}}(z_i)) \right]
-$$
-!--->
+### Intuition: EmpiricalIF
 
 <div style="text-align: center;">
-<img width="609" alt="Screenshot 2025-07-09 at 12 30 53 PM" src="https://github.com/user-attachments/assets/c8a46a8a-9a54-43fa-9df3-d076d2be8575" />
+<img width="609" alt="EmpiricalIF formula: expectation of loss change alignment under parameter perturbation" src="https://github.com/user-attachments/assets/c8a46a8a-9a54-43fa-9df3-d076d2be8575" />
 </div>
 
-Based on the final checkpoint, EmpiricalIF estimates the **loss change alignment** by perturbing $\hat{\theta}$ with $\delta$, where $\delta \sim \\{x \in \mathbb{R}^d \mid \left\lVert x \right\rVert = r\\}$:
-- A **positive value** suggests that $z_i$ co-evolve with test $z_{\text{test}}$, i.e. helpful.
-- A **negative value** suggests that $z_i$ conflict with test $z_{\text{test}}$, i.e. harmful.
+EmpiricalIF uses the **final checkpoint** only. It perturbs $\hat{\theta}$ with $\delta$ (e.g. on a sphere of radius $r$) and measures **loss-change alignment**:
 
-EmpiricalIF is a _**single-checkpoint**_ relaxation of TracIn.
-In practice, we find setting $\delta$ to be the steepest descent direction of testing and the steepest ascent direction of testing are sufficient for computing EmpiricalIF.
+- **Positive** → $z_i$ and test $z_{\text{test}}$ co-evolve → helpful  
+- **Negative** → $z_i$ conflicts with test → harmful  
 
-## 🛠️ Requirements
-- Step 1: Install torch, torchvision compatible with your CUDA, see here: [https://pytorch.org/get-started/previous-versions/](https://pytorch.org/get-started/previous-versions/)
-- Step 2: 
-```
-pip install -r requirements.txt
-```
+EmpiricalIF is a **single-checkpoint** variant of TracIn. In practice, using the steepest descent and ascent directions for the test loss is enough to compute it.
 
-## 💻 Instructions
+---
 
-Input Arguments:
-- ``dl_train``: Training dataloader of type torch.utils.data.DataLoader
-- ``model``: Model class of ``nn.Module`` type
-- ``param_filter_fn``: Module names that participate in influence calculation (e.g. last linear layer)
-- ``criterion``: Loss function
+## 🛠️ Installation
 
-Outputs:
-- Running ``IF.query_influence(test_input, test_target)`` will return a list of influence scores of size (|dl_train|,),  indicating how much each training sample contributes to this testing sample.
-  
-### Use Empirical IF
+1. **Install PyTorch** (match your CUDA version):  
+   [https://pytorch.org/get-started/previous-versions/](https://pytorch.org/get-started/previous-versions/)
+
+2. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+---
+
+## 💻 Quick Start
+
+**Inputs:**
+
+- `dl_train`: `torch.utils.data.DataLoader` for training data  
+- `model`: `nn.Module`  
+- `param_filter_fn`: which parameters to use (e.g. last layer only)  
+- `criterion`: loss with `reduction="none"`  
+
+**Output:**
+
+- `IF.query_influence(test_input, test_target)` returns a list of influence scores of length `|dl_train|`, one per training sample.
+
+---
+
+## 📖 Usage Examples
+
+### Empirical IF (recommended for speed)
+
 ```python
 from src.IF import EmpiricalIF
 
@@ -108,17 +125,18 @@ IF = EmpiricalIF(dl_train=trainloader,
 for test_sample in testloader:
     test_input, test_target = test_sample
     IF_scores = IF.query_influence(test_input, test_target)
-    print(IF_scores) # of size (|dl_train|,)
+    print(IF_scores)  # shape: (|dl_train|,)
 ```
 
-You can further validate the influence results by perturbing selected training samples (with highest and lowest influence values, due to time constraints) and observing how they affect the test loss. This serves as a reverse check of influence correctness.
+**Reverse check** (perturb top/bottom influence samples and compare):
+
 ```python
 most_inf, least_inf = IF.reverse_check(
     query_input=test_input,
     query_target=test_target,
     influence_values=IF_scores,
     check_ratio=0.01  # top and bottom 1%
-) # [(idx, influence_value, reverse_influence_value), ...], [(idx, influence_value, reverse_influence_value), ...]
+)
 
 for idx, orig_if, rev_if in most_inf:
     print(f"Top IF sample {idx}: IF={orig_if:.4f}, Reverse IF={rev_if:.4f}")
@@ -127,9 +145,8 @@ for idx, orig_if, rev_if in least_inf:
     print(f"Bottom IF sample {idx}: IF={orig_if:.4f}, Reverse IF={rev_if:.4f}")
 ```
 
+### Original Influence Function (ICML 2017)
 
-
-### Use Original Influence Function
 ```python
 from src.IF import BaseInfluenceFunction
 
@@ -144,17 +161,15 @@ for test_sample in testloader:
     print(IF_scores)
 ```
 
+### TracIn
 
-
-### Use TracIn
 ```python
 from src.IF import TracIn
 
 IF = TracIn(dl_train=trainloader,
-                           model=resnet18,
-                           param_filter_fn=lambda name, param: 'fc' in name,
-                           criterion=nn.CrossEntropyLoss(reduction="none"))
-
+            model=resnet18,
+            param_filter_fn=lambda name, param: 'fc' in name,
+            criterion=nn.CrossEntropyLoss(reduction="none"))
 
 for test_sample in testloader:
     test_input, test_target = test_sample
@@ -162,9 +177,13 @@ for test_sample in testloader:
     print(IF_scores)
 ```
 
-## If you Find our Repo Useful, Please Consider Cite our Paper 
+---
 
-```bibex
+## 📚 Citation
+
+If you use this repository, please cite the EmpiricalIF paper:
+
+```bibtex
 @article{liu2022debugging,
   title={Debugging and Explaining Metric Learning Approaches: An Influence Function Based Perspective},
   author={Liu, Ruofan and Lin, Yun and Yang, Xianglin and Dong, Jin Song},
@@ -174,3 +193,17 @@ for test_sample in testloader:
   year={2022}
 }
 ```
+
+---
+
+## 👤 Author & Contact
+
+**KuchikiRenji**
+
+| | |
+| --- | --- |
+| **GitHub** | [github.com/KuchikiRenji](https://github.com/KuchikiRenji) |
+| **Email** | [KuchikiRenji@outlook.com](mailto:KuchikiRenji@outlook.com) |
+| **Discord** | `kuchiki_renji` |
+
+For questions, collaborations, or feedback about this implementation, reach out via the links above.
